@@ -120,6 +120,7 @@ jobs:
           corepack prepare pnpm@9 --activate >/dev/null 2>&1 || sudo npm install -g pnpm@9 >/dev/null 2>&1 || true
           pnpm -v || true
       - name: Build · docusaurus
+        id: docusaurus
         if: steps.detect.outputs.docusaurus_cfg != '' && hashFiles('_atlas_site/index.html') == ''
         continue-on-error: true
         run: |
@@ -140,6 +141,32 @@ jobs:
           (pnpm install --ignore-scripts --no-frozen-lockfile || npm install --no-audit --no-fund) >/dev/null 2>&1 || exit 0
           (pnpm exec docusaurus build --out-dir "$GITHUB_WORKSPACE/_atlas_site_try" || npx docusaurus build --out-dir "$GITHUB_WORKSPACE/_atlas_site_try") || exit 0
           rm -rf "$GITHUB_WORKSPACE/_atlas_site"; mv "$GITHUB_WORKSPACE/_atlas_site_try" "$GITHUB_WORKSPACE/_atlas_site"
+
+      # Upstream's homepage is <Redirect to="/overview/quick-start">, an absolute
+      # path that ignores baseUrl and therefore leaves /immich/ entirely. Serve a
+      # base-aware root page that points at the real first doc instead.
+      - name: Fix docusaurus root redirect
+        if: steps.docusaurus.outcome == 'success' && hashFiles('_atlas_site/index.html') != ''
+        env:
+          ATLAS_HOME: overview/quick-start/
+        run: |
+          python3 - <<'PY'
+          import os, pathlib
+          home = os.environ.get("ATLAS_HOME", "").strip("/")
+          if not home:
+              raise SystemExit(0)
+          repo = os.environ["GITHUB_REPOSITORY"].split("/")[1]
+          target = "/%s/%s/" % (repo, home)
+          idx = pathlib.Path("_atlas_site/index.html")
+          idx.write_text(
+              "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
+              "<title>Immich docs</title>"
+              "<meta http-equiv=\"refresh\" content=\"0; url=%s\">"
+              "<script>location.replace(%r)</script>"
+              "</head><body><a href=\"%s\">Open the Immich documentation</a></body></html>"
+              % (target, target, target), encoding="utf-8")
+          print("root redirect ->", target)
+          PY
 
       - name: Fallback · render Markdown docs with mkdocs
         if: hashFiles('_atlas_site/index.html') == ''
